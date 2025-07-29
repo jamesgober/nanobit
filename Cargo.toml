@@ -1,0 +1,29 @@
+[package]
+name = "nanobit"
+version = "0.1.0"
+
+edition = "2021"
+readme = "README.md"
+license = "Apache-2.0"
+
+authors = [
+    "James Gober <code@jamesgober.dev>"
+]
+
+description = "Compressor"
+keywords = [
+    "compression", 
+    "decompression", 
+    "data-compression", 
+    "bit-packing", 
+    "bit-manipulation"
+]
+categories = [
+    "data-structures"
+]
+documentation = "https://docs.rs/nanobit"
+repository = "https://github.com/jamesgober/nanobit"
+homepage = "https://github.com/jamesgober/nanobit"
+
+
+[dependencies]
