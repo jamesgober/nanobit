@@ -28,6 +28,8 @@ documentation = "https://docs.rs/nanobit"
 repository = "https://github.com/jamesgober/nanobit"
 homepage = "https://github.com/jamesgober/nanobit"
 
+
+
 [features]
 default = ["std", "serde", "compression", "multi-compression"]
 std = []
@@ -35,6 +37,8 @@ async = ["tokio", "futures-core", "futures-util"]
 compression = ["lz4_flex"]
 multi-compression = ["zstd", "snap"]
 serde_compat = ["serde"]
+
+
 
 [dependencies]
 # Core async runtime support
@@ -51,6 +55,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 # Compression algorithms
 zstd = { version = "0.13", optional = true }
 snap = { version = "1.1", optional = true }
+
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
