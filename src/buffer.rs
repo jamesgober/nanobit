@@ -147,7 +147,7 @@ impl WriteBuffer {
         &self.data
     }
 
-    /// Convert the buffer into a Vec<u8>
+    /// Convert the buffer into a `Vec<u8`>
     pub fn into_vec(self) -> Vec<u8> {
         self.data
     }
