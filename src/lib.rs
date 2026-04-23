@@ -132,6 +132,7 @@ mod tests {
         value: u64,
         items: Vec<i32>,
         flag: bool,
+        whatever: u128
     }
 
     #[test]
@@ -141,6 +142,7 @@ mod tests {
             value: 42,
             items: vec![1, 2, 3, 4, 5],
             flag: true,
+            whatever: 123_456_789
         };
 
         let serialized = serialize(&data).unwrap();
@@ -156,6 +158,7 @@ mod tests {
             value: 0,
             items: vec![],
             flag: false,
+            whatever: 123_456_789
         };
 
         let serialized = serialize(&data).unwrap();
@@ -168,9 +171,11 @@ mod tests {
     fn test_primitive_types() {
         assert_eq!(42u32, deserialize::<u32>(&serialize(&42u32).unwrap()).unwrap());
         assert_eq!(-100i64, deserialize::<i64>(&serialize(&-100i64).unwrap()).unwrap());
-        assert_eq!(3.14f64, deserialize::<f64>(&serialize(&3.14f64).unwrap()).unwrap());
-        assert_eq!(true, deserialize::<bool>(&serialize(&true).unwrap()).unwrap());
+        assert_eq!(std::f64::consts::PI, deserialize::<f64>(&serialize(&std::f64::consts::PI).unwrap()).unwrap());
+        assert!(deserialize::<bool>(&serialize(&true).unwrap()).unwrap());
         assert_eq!("hello", deserialize::<&str>(&serialize(&"hello").unwrap()).unwrap());
+        assert_eq!(123_456_789u128, deserialize(&serialize(&123_456_789u128).unwrap()).unwrap());
+        assert_eq!(-123_456_789i128, deserialize(&serialize(&-123_456_789i128).unwrap()).unwrap());
     }
 
     #[cfg(any(feature = "compression", feature = "multi-compression"))]
@@ -181,6 +186,7 @@ mod tests {
             value: 12345,
             items: vec![42; 100],
             flag: true,
+            whatever: 123_456_789
         };
 
         let compressed = serialize_compressed(&data, CompressionLevel::Default).unwrap();

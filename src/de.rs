@@ -97,6 +97,14 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     }
 
     #[inline]
+    fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_i128(self.reader.read_i128()?)
+    }
+
+    #[inline]
     fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
@@ -126,6 +134,14 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
         V: Visitor<'de>,
     {
         visitor.visit_u64(self.reader.read_u64()?)
+    }
+
+    #[inline]
+    fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_u128(self.reader.read_u128()?)
     }
 
     #[inline]
@@ -550,8 +566,8 @@ mod tests {
     fn test_primitive_deserialization() {
         assert_eq!(from_bytes::<u32>(&to_bytes(&42u32).unwrap()).unwrap(), 42u32);
         assert_eq!(from_bytes::<i64>(&to_bytes(&-100i64).unwrap()).unwrap(), -100i64);
-        assert_eq!(from_bytes::<f64>(&to_bytes(&3.14f64).unwrap()).unwrap(), 3.14f64);
-        assert_eq!(from_bytes::<bool>(&to_bytes(&true).unwrap()).unwrap(), true);
+        assert_eq!(from_bytes::<f64>(&to_bytes(&std::f64::consts::PI).unwrap()).unwrap(), std::f64::consts::PI);
+        assert!(from_bytes::<bool>(&to_bytes(&true).unwrap()).unwrap());
         assert_eq!(from_bytes::<&str>(&to_bytes(&"hello").unwrap()).unwrap(), "hello");
     }
 

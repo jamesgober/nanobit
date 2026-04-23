@@ -54,6 +54,13 @@ impl WriteBuffer {
         Ok(())
     }
 
+    /// Write an i128 in little-endian format
+    #[inline]
+    pub fn write_u128(&mut self, value: u128) -> Result<()> {
+        self.data.extend_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
     /// Write an i8
     #[inline]
     pub fn write_i8(&mut self, value: i8) -> Result<()> {
@@ -76,6 +83,12 @@ impl WriteBuffer {
     #[inline]
     pub fn write_i64(&mut self, value: i64) -> Result<()> {
         self.write_u64(value as u64)
+    }
+
+    /// Write an i128 in little-endian format
+    #[inline]
+    pub fn write_i128(&mut self, value: i128) -> Result<()> {
+        self.write_u128(value as u128)
     }
 
     /// Write an f32 in IEEE 754 format
@@ -212,6 +225,13 @@ impl<'a> ReadBuffer<'a> {
         ]))
     }
 
+    /// Read a u128 in little-endian format
+    #[inline]
+    pub fn read_u128(&mut self) -> Result<u128> {
+        let bytes = self.read_bytes(16)?;
+        Ok(u128::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
     /// Read an i8
     #[inline]
     pub fn read_i8(&mut self) -> Result<i8> {
@@ -234,6 +254,12 @@ impl<'a> ReadBuffer<'a> {
     #[inline]
     pub fn read_i64(&mut self) -> Result<i64> {
         Ok(self.read_u64()? as i64)
+    }
+
+    /// Read an i128 in little-endian format
+    #[inline]
+    pub fn read_i128(&mut self) -> Result<i128> {
+        Ok(self.read_u128()? as i128)
     }
 
     /// Read an f32 in IEEE 754 format
@@ -359,8 +385,8 @@ mod tests {
         buf.write_i16(-1234).unwrap();
         buf.write_i32(-123456789).unwrap();
         buf.write_i64(-123456789012345).unwrap();
-        buf.write_f32(3.14159).unwrap();
-        buf.write_f64(2.718281828459045).unwrap();
+        buf.write_f32(std::f32::consts::PI).unwrap();
+        buf.write_f64(std::f64::consts::E).unwrap();
         buf.write_str("Hello, NanoBit!").unwrap();
 
         // Read them back
@@ -374,8 +400,8 @@ mod tests {
         assert_eq!(reader.read_i16().unwrap(), -1234);
         assert_eq!(reader.read_i32().unwrap(), -123456789);
         assert_eq!(reader.read_i64().unwrap(), -123456789012345);
-        assert!((reader.read_f32().unwrap() - 3.14159).abs() < f32::EPSILON);
-        assert!((reader.read_f64().unwrap() - 2.718281828459045).abs() < f64::EPSILON);
+        assert!((reader.read_f32().unwrap() - std::f32::consts::PI).abs() < f32::EPSILON);
+        assert!((reader.read_f64().unwrap() - std::f64::consts::E).abs() < f64::EPSILON);
         assert_eq!(reader.read_str().unwrap(), "Hello, NanoBit!");
     }
 
