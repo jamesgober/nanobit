@@ -6,7 +6,7 @@ readme = "README.md"
 license = "Apache-2.0"
 
 authors = [
-    "James Gober <code@jamesgober.dev>"
+    "James Gober <code@jamesgober.dev>",
 ]
 
 description = "Ultra-fast binary serialization with multi-format compression and zero-copy deserialization"

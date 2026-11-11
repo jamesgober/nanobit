@@ -6,9 +6,10 @@ use crate::error::{Error, Result};
 use serde::{Serialize, Deserialize};
 
 /// Supported compression formats
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionFormat {
     /// LZ4 fast compression
+    #[default]
     LZ4,
     /// ZSTD high-ratio compression  
     ZSTD,
@@ -19,29 +20,18 @@ pub enum CompressionFormat {
     NanoBit,
 }
 
-impl Default for CompressionFormat {
-    fn default() -> Self {
-        Self::LZ4
-    }
-}
-
 /// Compression level for algorithms that support it
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionLevel {
     /// Fastest compression with lower compression ratio
     Fastest,
     /// Default balanced compression
+    #[default]
     Default,
     /// Best compression ratio (slower)
     Best,
     /// Custom compression level (algorithm-specific)
     Custom(i32),
-}
-
-impl Default for CompressionLevel {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 /// Compress data using the specified format

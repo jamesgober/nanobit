@@ -89,6 +89,11 @@ impl serde::Serializer for &mut Serializer {
     }
 
     #[inline]
+    fn serialize_i128(self, v: i128) -> Result<()> {
+        self.buffer.write_i128(v)
+    }
+
+    #[inline]
     fn serialize_u8(self, v: u8) -> Result<()> {
         self.buffer.write_u8(v)
     }
@@ -106,6 +111,11 @@ impl serde::Serializer for &mut Serializer {
     #[inline]
     fn serialize_u64(self, v: u64) -> Result<()> {
         self.buffer.write_u64(v)
+    }
+
+    #[inline]
+    fn serialize_u128(self, v: u128) -> Result<()> {
+        self.buffer.write_u128(v)
     }
 
     #[inline]
@@ -437,7 +447,7 @@ mod tests {
     fn test_primitive_serialization() {
         assert!(to_bytes(&42u32).is_ok());
         assert!(to_bytes(&-100i64).is_ok());
-        assert!(to_bytes(&3.14f64).is_ok());
+        assert!(to_bytes(&std::f64::consts::PI).is_ok());
         assert!(to_bytes(&true).is_ok());
         assert!(to_bytes(&"hello").is_ok());
     }
