@@ -1,15 +1,23 @@
-//! # NanoBit - High-Performance Async Binary Serialization
+//! # NanoBit - High-Performance Binary Serialization
 //!
-//! A fast, efficient, and ergonomic binary serialization library with async support.
+//! A fast, efficient, and ergonomic binary serialization library.
 //!
 //! ## Features
 //!
 //! - **Zero-copy deserialization** where possible
-//! - **Async/await support** for non-blocking I/O
 //! - **High performance** with minimal allocations
-//! - **Flexible compression** with LZ4 support
+//! - **Flexible compression** with LZ4, Zstandard and Snappy
 //! - **Serde compatibility** for easy integration
 //! - **No unsafe code** in the core library
+//! - **`no_std` support** with `alloc` when the default features are off
+//!
+//! ## Untrusted input
+//!
+//! Decoding never panics on malformed input; it returns an [`Error`].
+//! Nesting is limited to [`DEFAULT_MAX_DEPTH`] levels (see
+//! [`Deserializer::with_max_depth`]), and [`decompress`] refuses to produce
+//! more than [`DEFAULT_MAX_DECOMPRESSED_SIZE`] bytes (see
+//! [`decompress_with_limit`]).
 //!
 //! ## Quick Start
 //!
@@ -39,40 +47,35 @@
 
 #![deny(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
 #[cfg(not(feature = "std"))]
-use alloc::{vec, vec::Vec, string::String};
+use alloc::vec::Vec;
 
-pub mod error;
-pub mod ser;
-pub mod de;
 pub mod buffer;
 pub mod compression;
-
-#[cfg(feature = "async")]
-pub mod async_ser;
-#[cfg(feature = "async")]
-pub mod async_de;
+pub mod de;
+pub mod error;
+pub mod ser;
 
 // Re-export main types
+pub use buffer::{ReadBuffer, WriteBuffer};
+pub use de::{from_bytes, Deserializer};
+#[cfg(feature = "std")]
+pub use de::{from_reader, from_reader_with_limit};
 pub use error::{Error, Result};
-pub use ser::{Serializer, to_bytes, to_writer};
-pub use de::{Deserializer, from_bytes, from_reader};
-pub use buffer::{WriteBuffer, ReadBuffer};
-
-#[cfg(feature = "async")]
-pub use async_ser::{AsyncSerializer, to_bytes_async, to_writer_async};
-#[cfg(feature = "async")]
-pub use async_de::{AsyncDeserializer, from_bytes_async, from_reader_async};
+pub use ser::to_bytes;
+#[cfg(feature = "std")]
+pub use ser::to_writer;
+pub use ser::Serializer;
 
 // Enhanced multi-format compression functionality
 pub use compression::{
-    CompressionFormat, CompressionLevel, 
-    compress, decompress, compress_default, is_serialized
+    compress, compress_default, decompress, decompress_with_limit, is_serialized,
+    CompressionFormat, CompressionLevel,
 };
 
 /// Magic bytes to identify NanoBit format
@@ -83,6 +86,19 @@ pub const VERSION: u8 = 1;
 
 /// Default buffer size for serialization
 pub const DEFAULT_BUFFER_SIZE: usize = 8192;
+
+/// How many levels of nesting the deserializer accepts by default.
+///
+/// Each `Some`, sequence, map, struct, enum variant and newtype struct is one
+/// level. Deeper input returns [`Error::InvalidFormat`].
+pub const DEFAULT_MAX_DEPTH: usize = 128;
+
+/// The most bytes [`decompress`] will produce: 64 MiB.
+///
+/// Larger output returns an error before the output buffer is allocated
+/// where the format states its size, and as soon as the limit is passed
+/// otherwise. Use [`decompress_with_limit`] for a different limit.
+pub const DEFAULT_MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
 
 /// Serialize a value to bytes using the default configuration
 pub fn serialize<T>(value: &T) -> Result<Vec<u8>>
@@ -111,14 +127,25 @@ where
 }
 
 /// Deserialize compressed data
+///
+/// The decompressed size is limited to [`DEFAULT_MAX_DECOMPRESSED_SIZE`].
 #[cfg(any(feature = "compression", feature = "multi-compression"))]
 pub fn deserialize_compressed<T>(bytes: &[u8]) -> Result<T>
 where
     T: for<'de> serde::Deserialize<'de>,
 {
-    let decompressed = decompress(bytes)?;
-    let borrowed_bytes = &decompressed;
-    from_bytes(borrowed_bytes)
+    deserialize_compressed_with_limit(bytes, DEFAULT_MAX_DECOMPRESSED_SIZE)
+}
+
+/// Deserialize compressed data whose decompressed size is at most
+/// `max_output` bytes.
+#[cfg(any(feature = "compression", feature = "multi-compression"))]
+pub fn deserialize_compressed_with_limit<T>(bytes: &[u8], max_output: usize) -> Result<T>
+where
+    T: for<'de> serde::Deserialize<'de>,
+{
+    let decompressed = decompress_with_limit(bytes, max_output)?;
+    from_bytes(&decompressed)
 }
 
 #[cfg(test)]
@@ -166,11 +193,23 @@ mod tests {
 
     #[test]
     fn test_primitive_types() {
-        assert_eq!(42u32, deserialize::<u32>(&serialize(&42u32).unwrap()).unwrap());
-        assert_eq!(-100i64, deserialize::<i64>(&serialize(&-100i64).unwrap()).unwrap());
-        assert_eq!(3.14f64, deserialize::<f64>(&serialize(&3.14f64).unwrap()).unwrap());
-        assert_eq!(true, deserialize::<bool>(&serialize(&true).unwrap()).unwrap());
-        assert_eq!("hello", deserialize::<&str>(&serialize(&"hello").unwrap()).unwrap());
+        assert_eq!(
+            42u32,
+            deserialize::<u32>(&serialize(&42u32).unwrap()).unwrap()
+        );
+        assert_eq!(
+            -100i64,
+            deserialize::<i64>(&serialize(&-100i64).unwrap()).unwrap()
+        );
+        assert_eq!(
+            2.5f64,
+            deserialize::<f64>(&serialize(&2.5f64).unwrap()).unwrap()
+        );
+        assert!(deserialize::<bool>(&serialize(&true).unwrap()).unwrap());
+        assert_eq!(
+            "hello",
+            deserialize::<&str>(&serialize(&"hello").unwrap()).unwrap()
+        );
     }
 
     #[cfg(any(feature = "compression", feature = "multi-compression"))]

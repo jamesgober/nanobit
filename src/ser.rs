@@ -1,14 +1,14 @@
 //! Binary serialization implementation
 
 #[cfg(not(feature = "std"))]
-use alloc::{vec::Vec, string::String};
+use alloc::{string::ToString, vec::Vec};
 
 #[cfg(feature = "std")]
 use std::io::Write;
 
 use serde::ser::{
-    Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
-    SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
+    Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
+    SerializeTupleStruct, SerializeTupleVariant,
 };
 
 use crate::buffer::WriteBuffer;
@@ -169,11 +169,7 @@ impl serde::Serializer for &mut Serializer {
     }
 
     #[inline]
-    fn serialize_newtype_struct<T>(
-        self,
-        _name: &'static str,
-        value: &T,
-    ) -> Result<()>
+    fn serialize_newtype_struct<T>(self, _name: &'static str, value: &T) -> Result<()>
     where
         T: Serialize + ?Sized,
     {
@@ -240,11 +236,7 @@ impl serde::Serializer for &mut Serializer {
     }
 
     #[inline]
-    fn serialize_struct(
-        self,
-        _name: &'static str,
-        len: usize,
-    ) -> Result<Self::SerializeStruct> {
+    fn serialize_struct(self, _name: &'static str, len: usize) -> Result<Self::SerializeStruct> {
         self.buffer.write_varint(len as u64)?;
         Ok(self)
     }
@@ -437,7 +429,7 @@ mod tests {
     fn test_primitive_serialization() {
         assert!(to_bytes(&42u32).is_ok());
         assert!(to_bytes(&-100i64).is_ok());
-        assert!(to_bytes(&3.14f64).is_ok());
+        assert!(to_bytes(&2.5f64).is_ok());
         assert!(to_bytes(&true).is_ok());
         assert!(to_bytes(&"hello").is_ok());
     }
@@ -455,7 +447,7 @@ mod tests {
         assert!(result.is_ok());
 
         let bytes = result.unwrap();
-        
+
         // Should start with magic bytes and version
         assert_eq!(&bytes[0..4], crate::MAGIC);
         assert_eq!(bytes[4], crate::VERSION);
@@ -467,10 +459,7 @@ mod tests {
         let result = to_bytes(&vec_data);
         assert!(result.is_ok());
 
-        let map_data = std::collections::HashMap::from([
-            ("key1", "value1"),
-            ("key2", "value2"),
-        ]);
+        let map_data = std::collections::HashMap::from([("key1", "value1"), ("key2", "value2")]);
         let result = to_bytes(&map_data);
         assert!(result.is_ok());
     }
@@ -495,7 +484,10 @@ mod tests {
 
         assert!(to_bytes(&TestEnum::Variant1).is_ok());
         assert!(to_bytes(&TestEnum::Variant2(42)).is_ok());
-        assert!(to_bytes(&TestEnum::Variant3 { field: "test".to_string() }).is_ok());
+        assert!(to_bytes(&TestEnum::Variant3 {
+            field: "test".to_string()
+        })
+        .is_ok());
     }
 
     #[cfg(feature = "std")]
@@ -503,7 +495,7 @@ mod tests {
     fn test_writer_serialization() {
         let data = vec![1u32, 2, 3, 4, 5];
         let mut buffer = Vec::new();
-        
+
         let result = to_writer(&mut buffer, &data);
         assert!(result.is_ok());
         assert!(!buffer.is_empty());

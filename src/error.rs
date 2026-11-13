@@ -2,8 +2,8 @@
 
 use core::fmt;
 
-#[cfg(feature = "std")]
-use std::error::Error as StdError;
+#[cfg(not(feature = "std"))]
+use alloc::string::{String, ToString};
 
 /// Result type alias for NanoBit operations
 pub type Result<T> = core::result::Result<T, Error>;
@@ -13,28 +13,28 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Invalid or corrupted data format
     InvalidFormat(String),
-    
+
     /// Unexpected end of input while reading
     UnexpectedEof,
-    
+
     /// Buffer overflow during writing
     BufferOverflow,
-    
+
     /// Not enough data to read
     NotEnoughData,
-    
+
     /// Unsupported version
     UnsupportedVersion(u8),
-    
+
     /// Compression/decompression error
     Compression(String),
-    
+
     /// I/O operation failed
     Io(String),
-    
+
     /// Serde serialization error
     Serde(String),
-    
+
     /// Custom error for user-defined problems
     Custom(String),
 }
@@ -55,8 +55,9 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl StdError for Error {}
+// `serde::ser::StdError` is `std::error::Error` with the `std` feature and
+// `core::error::Error` without it.
+impl serde::ser::StdError for Error {}
 
 impl serde::ser::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
