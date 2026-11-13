@@ -1,7 +1,7 @@
 //! Binary deserialization implementation
 
 #[cfg(not(feature = "std"))]
-use alloc::{vec::Vec, string::String};
+use alloc::{format, string::ToString};
 
 #[cfg(feature = "std")]
 use std::io::Read;
@@ -14,8 +14,15 @@ use crate::buffer::ReadBuffer;
 use crate::error::{Error, Result};
 
 /// High-performance binary deserializer
+///
+/// Nested values (options, sequences, maps, structs, enums and newtype
+/// structs) are limited to [`DEFAULT_MAX_DEPTH`](crate::DEFAULT_MAX_DEPTH)
+/// levels so that deeply nested input returns an error instead of
+/// overflowing the stack. Use [`Deserializer::with_max_depth`] to change it.
 pub struct Deserializer<'de> {
     reader: ReadBuffer<'de>,
+    max_depth: usize,
+    remaining_depth: usize,
 }
 
 impl<'de> Deserializer<'de> {
@@ -23,7 +30,9 @@ impl<'de> Deserializer<'de> {
     pub fn new(data: &'de [u8]) -> Result<Self> {
         // Verify header
         if data.len() < 5 {
-            return Err(Error::InvalidFormat("Data too short for header".to_string()));
+            return Err(Error::InvalidFormat(
+                "Data too short for header".to_string(),
+            ));
         }
 
         // Check magic bytes
@@ -40,7 +49,54 @@ impl<'de> Deserializer<'de> {
         // Create reader starting after header
         let reader = ReadBuffer::new(&data[5..]);
 
-        Ok(Self { reader })
+        Ok(Self {
+            reader,
+            max_depth: crate::DEFAULT_MAX_DEPTH,
+            remaining_depth: crate::DEFAULT_MAX_DEPTH,
+        })
+    }
+
+    /// Set how many levels of nesting the input may use.
+    ///
+    /// ```
+    /// use serde::Deserialize;
+    ///
+    /// let bytes = nanobit::to_bytes(&vec![vec![1u8]]).unwrap();
+    /// let mut de = nanobit::Deserializer::new(&bytes).unwrap().with_max_depth(1);
+    /// assert!(Vec::<Vec<u8>>::deserialize(&mut de).is_err());
+    /// ```
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self.remaining_depth = max_depth;
+        self
+    }
+
+    /// The nesting limit in force for this deserializer.
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+
+    fn enter(&mut self) -> Result<()> {
+        if self.remaining_depth == 0 {
+            return Err(Error::InvalidFormat(format!(
+                "Input nested deeper than {} levels",
+                self.max_depth
+            )));
+        }
+        self.remaining_depth -= 1;
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.remaining_depth += 1;
+    }
+
+    fn nested<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.enter()?;
+        let result = f(self);
+        self.leave();
+        result
     }
 }
 
@@ -197,7 +253,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
         let tag = self.reader.read_u8()?;
         match tag {
             0 => visitor.visit_none(),
-            1 => visitor.visit_some(self),
+            1 => self.nested(|de| visitor.visit_some(de)),
             _ => Err(Error::InvalidFormat("Invalid option tag".to_string())),
         }
     }
@@ -223,7 +279,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_newtype_struct(self)
+        self.nested(|de| visitor.visit_newtype_struct(de))
     }
 
     #[inline]
@@ -231,8 +287,8 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.reader.read_varint()? as usize;
-        visitor.visit_seq(SeqDeserializer::new(self, len))
+        let len = self.reader.read_len()?;
+        self.nested(|de| visitor.visit_seq(SeqDeserializer::new(de, len)))
     }
 
     #[inline]
@@ -240,13 +296,13 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let expected_len = self.reader.read_varint()? as usize;
+        let expected_len = self.reader.read_len()?;
         if expected_len != len {
             return Err(Error::InvalidFormat(format!(
                 "Tuple length mismatch: expected {len}, got {expected_len}"
             )));
         }
-        visitor.visit_seq(SeqDeserializer::new(self, len))
+        self.nested(|de| visitor.visit_seq(SeqDeserializer::new(de, len)))
     }
 
     #[inline]
@@ -267,8 +323,8 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.reader.read_varint()? as usize;
-        visitor.visit_map(MapDeserializer::new(self, len))
+        let len = self.reader.read_len()?;
+        self.nested(|de| visitor.visit_map(MapDeserializer::new(de, len)))
     }
 
     #[inline]
@@ -281,7 +337,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.reader.read_varint()? as usize;
+        let len = self.reader.read_len()?;
         if len != fields.len() {
             return Err(Error::InvalidFormat(format!(
                 "Struct field count mismatch: expected {}, got {}",
@@ -289,7 +345,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
                 len
             )));
         }
-        visitor.visit_seq(SeqDeserializer::new(self, len))
+        self.nested(|de| visitor.visit_seq(SeqDeserializer::new(de, len)))
     }
 
     #[inline]
@@ -302,7 +358,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_enum(EnumDeserializer::new(self))
+        self.nested(|de| visitor.visit_enum(EnumDeserializer::new(de)))
     }
 
     #[inline]
@@ -330,10 +386,7 @@ struct SeqDeserializer<'a, 'de> {
 
 impl<'a, 'de> SeqDeserializer<'a, 'de> {
     fn new(de: &'a mut Deserializer<'de>, len: usize) -> Self {
-        Self {
-            de,
-            remaining: len,
-        }
+        Self { de, remaining: len }
     }
 }
 
@@ -364,10 +417,7 @@ struct MapDeserializer<'a, 'de> {
 
 impl<'a, 'de> MapDeserializer<'a, 'de> {
     fn new(de: &'a mut Deserializer<'de>, len: usize) -> Self {
-        Self {
-            de,
-            remaining: len,
-        }
+        Self { de, remaining: len }
     }
 }
 
@@ -440,7 +490,7 @@ impl<'de, 'a> VariantAccess<'de> for EnumDeserializer<'a, 'de> {
     where
         V: Visitor<'de>,
     {
-        let actual_len = self.de.reader.read_varint()? as usize;
+        let actual_len = self.de.reader.read_len()?;
         if actual_len != len {
             return Err(Error::InvalidFormat(format!(
                 "Tuple variant length mismatch: expected {len}, got {actual_len}"
@@ -453,7 +503,7 @@ impl<'de, 'a> VariantAccess<'de> for EnumDeserializer<'a, 'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.de.reader.read_varint()? as usize;
+        let len = self.de.reader.read_len()?;
         if len != fields.len() {
             return Err(Error::InvalidFormat(format!(
                 "Struct variant field count mismatch: expected {}, got {}",
@@ -517,6 +567,9 @@ where
 }
 
 /// Deserialize from a reader
+///
+/// This reads the whole stream into memory first, with no size limit. For a
+/// stream you do not control, use [`from_reader_with_limit`].
 #[cfg(feature = "std")]
 pub fn from_reader<R, T>(reader: R) -> Result<T>
 where
@@ -526,8 +579,36 @@ where
     let mut reader = reader;
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer).map_err(Error::from)?;
-    
+
     // We need to work with owned data for the reader case
+    let mut deserializer = Deserializer::new(&buffer)?;
+    T::deserialize(&mut deserializer)
+}
+
+/// Deserialize from a reader, reading at most `max_bytes` bytes.
+///
+/// Returns [`Error::InvalidFormat`] if the stream holds more than
+/// `max_bytes` bytes.
+#[cfg(feature = "std")]
+pub fn from_reader_with_limit<R, T>(reader: R, max_bytes: usize) -> Result<T>
+where
+    R: Read,
+    T: for<'de> Deserialize<'de>,
+{
+    let mut buffer = Vec::new();
+    let limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    reader
+        .take(limit)
+        .read_to_end(&mut buffer)
+        .map_err(Error::from)?;
+    if buffer.len() > max_bytes {
+        return Err(Error::InvalidFormat(format!(
+            "Input is larger than the {max_bytes} byte limit"
+        )));
+    }
+
     let mut deserializer = Deserializer::new(&buffer)?;
     T::deserialize(&mut deserializer)
 }
@@ -548,11 +629,23 @@ mod tests {
 
     #[test]
     fn test_primitive_deserialization() {
-        assert_eq!(from_bytes::<u32>(&to_bytes(&42u32).unwrap()).unwrap(), 42u32);
-        assert_eq!(from_bytes::<i64>(&to_bytes(&-100i64).unwrap()).unwrap(), -100i64);
-        assert_eq!(from_bytes::<f64>(&to_bytes(&3.14f64).unwrap()).unwrap(), 3.14f64);
-        assert_eq!(from_bytes::<bool>(&to_bytes(&true).unwrap()).unwrap(), true);
-        assert_eq!(from_bytes::<&str>(&to_bytes(&"hello").unwrap()).unwrap(), "hello");
+        assert_eq!(
+            from_bytes::<u32>(&to_bytes(&42u32).unwrap()).unwrap(),
+            42u32
+        );
+        assert_eq!(
+            from_bytes::<i64>(&to_bytes(&-100i64).unwrap()).unwrap(),
+            -100i64
+        );
+        assert_eq!(
+            from_bytes::<f64>(&to_bytes(&2.5f64).unwrap()).unwrap(),
+            2.5f64
+        );
+        assert!(from_bytes::<bool>(&to_bytes(&true).unwrap()).unwrap());
+        assert_eq!(
+            from_bytes::<&str>(&to_bytes(&"hello").unwrap()).unwrap(),
+            "hello"
+        );
     }
 
     #[test]
@@ -582,7 +675,8 @@ mod tests {
             ("key2".to_string(), "value2".to_string()),
         ]);
         let serialized = to_bytes(&map_data).unwrap();
-        let deserialized: std::collections::HashMap<String, String> = from_bytes(&serialized).unwrap();
+        let deserialized: std::collections::HashMap<String, String> =
+            from_bytes(&serialized).unwrap();
         assert_eq!(map_data, deserialized);
     }
 
@@ -613,7 +707,9 @@ mod tests {
         let variants = vec![
             TestEnum::Variant1,
             TestEnum::Variant2(42),
-            TestEnum::Variant3 { field: "test".to_string() },
+            TestEnum::Variant3 {
+                field: "test".to_string(),
+            },
         ];
 
         for variant in variants {
@@ -650,13 +746,95 @@ mod tests {
         }
     }
 
+    #[test]
+    fn hostile_string_length_is_an_error() {
+        let mut input = b"NANO".to_vec();
+        input.extend_from_slice(&[0xff; 9]);
+        input.push(0x01);
+        assert_eq!(from_bytes::<String>(&input), Err(Error::UnexpectedEof));
+        assert_eq!(from_bytes::<&str>(&input), Err(Error::UnexpectedEof));
+        assert_eq!(from_bytes::<&[u8]>(&input), Err(Error::UnexpectedEof));
+    }
+
+    #[derive(Deserialize, Serialize, Debug, PartialEq)]
+    enum Nest {
+        End,
+        Next(Box<Nest>),
+    }
+
+    fn nested_input(levels: usize) -> Vec<u8> {
+        let mut input = b"NANO".to_vec();
+        input.extend_from_slice(&vec![1u8; levels]);
+        input.push(0);
+        input
+    }
+
+    #[test]
+    fn deep_nesting_is_an_error_not_a_stack_overflow() {
+        let result = from_bytes::<Nest>(&nested_input(1_000_000));
+        assert!(matches!(result, Err(Error::InvalidFormat(_))), "{result:?}");
+    }
+
+    #[test]
+    fn nesting_within_the_limit_still_works() {
+        let mut value = Nest::End;
+        for _ in 0..crate::DEFAULT_MAX_DEPTH - 1 {
+            value = Nest::Next(Box::new(value));
+        }
+        let bytes = to_bytes(&value).unwrap();
+        assert_eq!(from_bytes::<Nest>(&bytes).unwrap(), value);
+
+        let too_deep = Nest::Next(Box::new(value));
+        let bytes = to_bytes(&too_deep).unwrap();
+        assert!(from_bytes::<Nest>(&bytes).is_err());
+
+        let mut de = Deserializer::new(&bytes).unwrap().with_max_depth(200);
+        assert_eq!(de.max_depth(), 200);
+        assert_eq!(Nest::deserialize(&mut de).unwrap(), too_deep);
+    }
+
+    #[test]
+    fn depth_counts_every_kind_of_nesting() {
+        let bytes = to_bytes(&Some(Some(1u8))).unwrap();
+        let mut de = Deserializer::new(&bytes).unwrap().with_max_depth(1);
+        assert!(Option::<Option<u8>>::deserialize(&mut de).is_err());
+
+        let bytes = to_bytes(&vec![vec![1u8]]).unwrap();
+        let mut de = Deserializer::new(&bytes).unwrap().with_max_depth(2);
+        assert_eq!(
+            Vec::<Vec<u8>>::deserialize(&mut de).unwrap(),
+            vec![vec![1u8]]
+        );
+
+        // Sibling values do not add up: depth is restored on the way out.
+        let wide = vec![vec![1u8]; 1000];
+        let bytes = to_bytes(&wide).unwrap();
+        let mut de = Deserializer::new(&bytes).unwrap().with_max_depth(2);
+        assert_eq!(Vec::<Vec<u8>>::deserialize(&mut de).unwrap(), wide);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn reader_limit_is_enforced() {
+        let data = vec![7u8; 100];
+        let serialized = to_bytes(&data).unwrap();
+        let ok: Vec<u8> =
+            from_reader_with_limit(std::io::Cursor::new(&serialized), serialized.len()).unwrap();
+        assert_eq!(ok, data);
+        let err = from_reader_with_limit::<_, Vec<u8>>(
+            std::io::Cursor::new(&serialized),
+            serialized.len() - 1,
+        );
+        assert!(matches!(err, Err(Error::InvalidFormat(_))));
+    }
+
     #[cfg(feature = "std")]
     #[test]
     fn test_reader_deserialization() {
         let data = vec![1u32, 2, 3, 4, 5];
         let serialized = to_bytes(&data).unwrap();
         let cursor = std::io::Cursor::new(serialized);
-        
+
         let deserialized: Vec<u32> = from_reader(cursor).unwrap();
         assert_eq!(data, deserialized);
     }

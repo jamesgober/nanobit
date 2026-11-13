@@ -1,7 +1,7 @@
 //! High-performance buffer implementations for binary I/O
 
 #[cfg(not(feature = "std"))]
-use alloc::{vec, vec::Vec};
+use alloc::{string::ToString, vec::Vec};
 
 use crate::error::{Error, Result};
 
@@ -207,8 +207,7 @@ impl<'a> ReadBuffer<'a> {
     pub fn read_u64(&mut self) -> Result<u64> {
         let bytes = self.read_bytes(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -251,6 +250,9 @@ impl<'a> ReadBuffer<'a> {
     }
 
     /// Read a variable-length unsigned integer (varint)
+    ///
+    /// Fails on a varint longer than ten bytes or one whose value does not
+    /// fit in a `u64`.
     pub fn read_varint(&mut self) -> Result<u64> {
         let mut result = 0u64;
         let mut shift = 0;
@@ -261,6 +263,10 @@ impl<'a> ReadBuffer<'a> {
             }
 
             let byte = self.read_u8()?;
+            // The tenth byte holds only the top bit of a u64.
+            if shift == 63 && byte > 1 {
+                return Err(Error::InvalidFormat("Varint overflows u64".to_string()));
+            }
             result |= ((byte & 0x7F) as u64) << shift;
 
             if byte & 0x80 == 0 {
@@ -273,10 +279,21 @@ impl<'a> ReadBuffer<'a> {
         Ok(result)
     }
 
+    /// Read a varint that holds a length or a count.
+    ///
+    /// Fails if the value does not fit in `usize` on this target.
+    pub fn read_len(&mut self) -> Result<usize> {
+        let value = self.read_varint()?;
+        usize::try_from(value)
+            .map_err(|_| Error::InvalidFormat("Length does not fit in usize".to_string()))
+    }
+
     /// Read a specific number of bytes
     #[inline]
     pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
-        if self.position + len > self.data.len() {
+        // `position <= data.len()` always holds, so this cannot underflow,
+        // and unlike `position + len` it cannot overflow for a huge `len`.
+        if len > self.remaining() {
             return Err(Error::UnexpectedEof);
         }
         let bytes = &self.data[self.position..self.position + len];
@@ -286,16 +303,15 @@ impl<'a> ReadBuffer<'a> {
 
     /// Read a length-prefixed byte slice
     pub fn read_byte_slice(&mut self) -> Result<&'a [u8]> {
-        let len = self.read_varint()? as usize;
+        let len = self.read_len()?;
         self.read_bytes(len)
     }
 
     /// Read a length-prefixed string
     pub fn read_str(&mut self) -> Result<&'a str> {
         let bytes = self.read_byte_slice()?;
-        core::str::from_utf8(bytes).map_err(|_| {
-            Error::InvalidFormat("Invalid UTF-8 string".to_string())
-        })
+        core::str::from_utf8(bytes)
+            .map_err(|_| Error::InvalidFormat("Invalid UTF-8 string".to_string()))
     }
 
     /// Get the current position in the buffer
@@ -328,7 +344,7 @@ impl<'a> ReadBuffer<'a> {
     /// Skip a number of bytes
     #[inline]
     pub fn skip(&mut self, count: usize) -> Result<()> {
-        if self.position + count > self.data.len() {
+        if count > self.remaining() {
             return Err(Error::UnexpectedEof);
         }
         self.position += count;
@@ -359,8 +375,8 @@ mod tests {
         buf.write_i16(-1234).unwrap();
         buf.write_i32(-123456789).unwrap();
         buf.write_i64(-123456789012345).unwrap();
-        buf.write_f32(3.14159).unwrap();
-        buf.write_f64(2.718281828459045).unwrap();
+        buf.write_f32(1.5).unwrap();
+        buf.write_f64(-0.25).unwrap();
         buf.write_str("Hello, NanoBit!").unwrap();
 
         // Read them back
@@ -374,24 +390,24 @@ mod tests {
         assert_eq!(reader.read_i16().unwrap(), -1234);
         assert_eq!(reader.read_i32().unwrap(), -123456789);
         assert_eq!(reader.read_i64().unwrap(), -123456789012345);
-        assert!((reader.read_f32().unwrap() - 3.14159).abs() < f32::EPSILON);
-        assert!((reader.read_f64().unwrap() - 2.718281828459045).abs() < f64::EPSILON);
+        assert_eq!(reader.read_f32().unwrap(), 1.5);
+        assert_eq!(reader.read_f64().unwrap(), -0.25);
         assert_eq!(reader.read_str().unwrap(), "Hello, NanoBit!");
     }
 
     #[test]
     fn test_varint_encoding() {
         let mut buf = WriteBuffer::new();
-        
+
         // Test various varint values
         let values = [0, 127, 128, 255, 256, 16384, 2097151, 268435456, u64::MAX];
-        
+
         for &value in &values {
             buf.write_varint(value).unwrap();
         }
-        
+
         let mut reader = ReadBuffer::new(buf.as_slice());
-        
+
         for &expected in &values {
             assert_eq!(reader.read_varint().unwrap(), expected);
         }
@@ -412,17 +428,45 @@ mod tests {
     }
 
     #[test]
+    fn huge_length_is_an_error_not_a_panic() {
+        let mut data = vec![0xff; 9];
+        data.push(0x01); // varint u64::MAX
+        data.extend_from_slice(b"abc");
+        let mut reader = ReadBuffer::new(&data);
+        assert_eq!(reader.read_byte_slice(), Err(Error::UnexpectedEof));
+
+        let mut reader = ReadBuffer::new(b"abc");
+        assert_eq!(reader.read_bytes(usize::MAX), Err(Error::UnexpectedEof));
+        assert_eq!(reader.skip(usize::MAX), Err(Error::UnexpectedEof));
+        assert_eq!(reader.position(), 0);
+        reader.skip(3).unwrap();
+        assert_eq!(reader.read_bytes(0).unwrap(), b"");
+    }
+
+    #[test]
+    fn varint_that_overflows_u64_is_rejected() {
+        let mut data = vec![0xff; 9];
+        data.push(0x02);
+        let mut reader = ReadBuffer::new(&data);
+        assert!(matches!(reader.read_varint(), Err(Error::InvalidFormat(_))));
+
+        let data = [0x80u8; 11];
+        let mut reader = ReadBuffer::new(&data);
+        assert!(matches!(reader.read_varint(), Err(Error::InvalidFormat(_))));
+    }
+
+    #[test]
     fn test_string_encoding() {
         let mut buf = WriteBuffer::new();
-        
+
         let test_strings = ["", "hello", "世界", "🚀 NanoBit"];
-        
+
         for s in &test_strings {
             buf.write_str(s).unwrap();
         }
-        
+
         let mut reader = ReadBuffer::new(buf.as_slice());
-        
+
         for expected in &test_strings {
             assert_eq!(reader.read_str().unwrap(), *expected);
         }

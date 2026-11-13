@@ -29,7 +29,7 @@ nanobit is a high-performance binary serialization library designed for maximum 
 - **🚀 Ultra-Fast Performance** - Zero-copy deserialization where possible with minimal allocations
 - **🗜️ Multi-Format Compression** - Built-in support for LZ4, ZSTD, and Snappy compression
 - **🔧 Auto-Format Detection** - Intelligent decompression that automatically detects compression formats
-- **🎯 Zero Dependencies** - Core library works without std, perfect for embedded systems
+- **🎯 no_std Support** - The core format builds without std (it needs `alloc`), for embedded systems
 - **📦 Serde Compatible** - Seamless integration with the serde ecosystem
 - **🔒 Memory Safe** - No unsafe code in the core library
 - **⚙️ Configurable** - Feature flags for optional dependencies and compression algorithms
@@ -41,7 +41,7 @@ Add nanobit to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-nanobit = "0.2"
+nanobit = "0.3"
 ```
 
 ### Feature Flags
@@ -50,15 +50,16 @@ Enable specific compression formats:
 
 ```toml
 [dependencies]
-nanobit = { version = "0.2", features = ["compression", "multi-compression"] }
+nanobit = { version = "0.3", features = ["compression", "multi-compression"] }
 ```
 
 Available features:
-- `std` - Standard library support (enabled by default)
-- `serde` - Serde integration (enabled by default)  
-- `compression` - LZ4 compression support (enabled by default)
-- `multi-compression` - ZSTD and Snappy support (enabled by default)
-- `async` - Async serialization support
+- `std` - Standard library support: `to_writer`, `from_reader` (enabled by default)
+- `compression` - LZ4 compression support, needs `std` (enabled by default)
+- `multi-compression` - ZSTD and Snappy support, needs `std` (enabled by default)
+
+serde is always enabled. The old `serde` and `serde_compat` feature names still
+work and do nothing.
 
 ## Quick Start
 
@@ -192,10 +193,8 @@ nanobit is designed for maximum performance:
 - **Fast compression** with multiple algorithm choices
 - **Optimized for database storage** with compact binary format
 
-Typical performance characteristics:
-- **Serialization**: ~2-5 GB/s depending on data complexity
-- **Deserialization**: ~3-8 GB/s with zero-copy optimizations
-- **Compression**: Format-dependent (LZ4: fastest, ZSTD: best ratio)
+Compression speed and ratio depend on the format: LZ4 is the fastest, ZSTD
+gives the best ratio.
 
 ## Format Specification
 
@@ -224,14 +223,43 @@ match from_bytes::<String>(&invalid_data) {
 }
 ```
 
+## Untrusted Input
+
+Decoding returns an error on malformed input instead of panicking, and the
+decoders have limits so a small input cannot use up memory or stack:
+
+- **Nesting**: the deserializer accepts 128 levels of nesting by default
+  (`DEFAULT_MAX_DEPTH`). Each `Some`, sequence, map, struct, enum variant and
+  newtype struct is one level. Change it with `Deserializer::with_max_depth`.
+- **Decompression**: `decompress` and `deserialize_compressed` produce at most
+  64 MiB (`DEFAULT_MAX_DECOMPRESSED_SIZE`). LZ4 and Snappy sizes are checked
+  before the output buffer is allocated, and ZSTD output stops at the limit.
+  Use `decompress_with_limit` or `deserialize_compressed_with_limit` to pick
+  your own limit.
+- **Readers**: `from_reader` reads the whole stream. Use
+  `from_reader_with_limit` for a stream you do not control.
+
+```rust
+use nanobit::{decompress_with_limit, Deserializer};
+use serde::Deserialize;
+
+fn read_values(compressed: &[u8]) -> Result<Vec<u32>, nanobit::Error> {
+    let bytes = decompress_with_limit(compressed, 1024 * 1024)?;
+    let mut de = Deserializer::new(&bytes)?.with_max_depth(32);
+    Vec::<u32>::deserialize(&mut de)
+}
+```
+
 ## no_std Support
 
-nanobit works in `no_std` environments:
+The core format works in `no_std` environments with `alloc`:
 
 ```toml
 [dependencies]
-nanobit = { version = "0.1", default-features = false, features = ["serde"] }
+nanobit = { version = "0.3", default-features = false }
 ```
+
+Compression needs `std`.
 
 ## Contributing
 
@@ -246,10 +274,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## License
 
 This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
-
-## Benchmarks
-
-See [benchmarks](benches/) for detailed performance comparisons with other serialization libraries including bincode, postcard, and rmp-serde.
 
 ---
 

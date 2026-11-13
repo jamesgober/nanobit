@@ -10,9 +10,53 @@
 
 ## [Unreleased]
 
+<br>
 
+## [0.3.0] - 2026-11-13
 
+This release makes decoding safe on input you do not control. Upgrading is
+recommended for anyone who decodes or decompresses data from outside the
+process.
 
+### Fixed
+- A string or byte slice whose length prefix was close to `usize::MAX` made
+  `from_bytes` panic. Lengths are now checked without overflow and such
+  input returns `Error::UnexpectedEof`.
+- `decompress` allocated whatever size an LZ4 or Snappy header claimed (up to
+  4 GiB) before checking anything. The claimed size is now checked against a
+  limit and against what the input could expand to before any allocation.
+- ZSTD output had no ceiling. It now stops at the same limit.
+- Deeply nested input could overflow the stack and abort the process.
+  Nesting is now limited (128 levels by default).
+- Varints that do not fit in a `u64`, and lengths that do not fit in `usize`
+  on 32-bit targets, are rejected instead of being truncated.
+- `cargo build --no-default-features` failed. The crate now builds for
+  `no_std` targets with `alloc`.
+- The `async` feature pointed at modules that were never in the crate, so it
+  never compiled (#3).
+
+### Added
+- `decompress_with_limit` and `deserialize_compressed_with_limit` to set the
+  most bytes decompression may produce.
+- `DEFAULT_MAX_DECOMPRESSED_SIZE` (64 MiB), used by `decompress` and
+  `deserialize_compressed`.
+- `Deserializer::with_max_depth`, `Deserializer::max_depth` and
+  `DEFAULT_MAX_DEPTH` (128).
+- `ReadBuffer::read_len` for reading a length or count.
+- `from_reader_with_limit`.
+
+### Changed
+- `decompress` and `deserialize_compressed` now refuse output larger than
+  64 MiB. Use the `_with_limit` versions for larger data.
+- serde is now a required dependency; it was already needed to build. The
+  `serde` and `serde_compat` features are kept and do nothing.
+- The `compression` and `multi-compression` features now enable `std`.
+- `to_writer`, `from_reader` and `from_reader_with_limit` are only exported
+  with the `std` feature, which they always needed.
+
+### Removed
+- The `async` feature and its optional `tokio`, `futures-core` and
+  `futures-util` dependencies.
 
 <br>
 
@@ -70,7 +114,7 @@
 
 <!-- FOOT LINKS
 ################################################# -->
-[Unreleased]: https://github.com/jamesgober/rust-benchmark/compare/v0.2.0...HEAD
-[0.3.0]: https://github.com/jamesgober/rust-benchmark/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/jamesgober/rust-benchmark/releases/tag/v0.2.0
+[Unreleased]: https://github.com/jamesgober/nanobit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jamesgober/nanobit/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/jamesgober/nanobit/releases/tag/v0.2.0
 [0.1.0]: #
